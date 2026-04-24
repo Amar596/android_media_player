@@ -884,15 +884,6 @@ class MainActivity : FlutterActivity() {
             "error" -> "ERROR"
             else -> "UNKNOWN"
         }
-        
-        // return when (type) {
-        //     "started", "alive", "heartbeat", "running" -> "RUNNING"
-        //     "stopped" -> "STOPPED"
-        //     "background" -> "BACKGROUND"
-        //     "test" -> "TESTING"
-        //     "error" -> "ERROR"
-        //     else -> "UNKNOWN"
-        // }
     }
 
     private fun loadMessageHistory(): String {
