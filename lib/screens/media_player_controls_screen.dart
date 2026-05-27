@@ -4,9 +4,11 @@ import 'package:media_player_port/screens/ScreenshotGalleryScreen.dart';
 import 'package:media_player_port/screens/wauly_monitor_screen.dart';
 import 'package:media_player_port/services/ScreenshotService.dart';
 import 'package:media_player_port/services/connectivity_service.dart';
+import 'package:media_player_port/services/wauly_app_service.dart';
 import 'package:media_player_port/widgets/connectivity_status_card.dart';
 import 'package:path_provider/path_provider.dart';
 import 'package:screenshot/screenshot.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 import '../services/device_info_service.dart';
 import '../services/volume_service.dart';
 import '../services/brightness_service.dart';
@@ -18,6 +20,7 @@ import '../widgets/rotation_control_card.dart';
 import '../widgets/action_buttons_card.dart';
 import '../utils/constants.dart';
 import '../services/screen_service.dart';
+import '../services/wauly_app_manager.dart';
 
 class MediaPlayerControlsScreen extends StatefulWidget {
   const MediaPlayerControlsScreen({super.key});
@@ -44,12 +47,14 @@ class _MediaPlayerControlsScreenState extends State<MediaPlayerControlsScreen>
   late Animation<double> _fadeAnimation;
 
   bool _isDisposed = false;
+  bool _autoOpenEnabled = false;
 
   @override
   void initState() {
     super.initState();
     _initializeServices();
     _setupAnimation();
+    _loadAutoOpenSetting();
   }
 
   @override
@@ -79,7 +84,6 @@ class _MediaPlayerControlsScreenState extends State<MediaPlayerControlsScreen>
     _brightnessService.initialize(onBrightnessChanged: _onBrightnessChanged);
     await _systemService.requestBrightnessPermission(context);
 
-    //setState(() => _isLoading = false);
     if (!_isDisposed && mounted) {
       setState(() => _isLoading = false);
     }
@@ -97,9 +101,6 @@ class _MediaPlayerControlsScreenState extends State<MediaPlayerControlsScreen>
     }
   }
 
-  // void _onVolumeChanged() => setState(() {});
-  // void _onBrightnessChanged() => setState(() {});
-
   Future<void> _loadDeviceInfo() async {
     _deviceDetails = await _deviceInfoService.getDeviceDetails();
   }
@@ -107,6 +108,28 @@ class _MediaPlayerControlsScreenState extends State<MediaPlayerControlsScreen>
   void _showSnackBar(String message, Color color) {
     if (!mounted) return;
     _systemService.showSnackBar(context, message, color);
+  }
+
+  // Add auto-launch methods
+  Future<void> _loadAutoOpenSetting() async {
+    final prefs = await SharedPreferences.getInstance();
+    setState(() {
+      _autoOpenEnabled = prefs.getBool('auto_open_wauly_app') ?? false;
+    });
+  }
+
+  Future<void> _saveAutoOpenSetting(bool value) async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setBool('auto_open_wauly_app', value);
+  }
+
+  void _autoClickOpenWaulyApp() {
+    // Optional: Trigger immediately when turned ON
+    Future.delayed(const Duration(milliseconds: 500), () {
+      if (_autoOpenEnabled) {
+        WaulyAppManager.handleAppFlow(context);
+      }
+    });
   }
 
   // Screenshot methods
@@ -154,8 +177,6 @@ class _MediaPlayerControlsScreenState extends State<MediaPlayerControlsScreen>
         builder: (BuildContext context) {
           return AlertDialog(
             title: const Text('Screenshots Location'),
-            // content: Text(
-            //     'Files are saved at:\n$path\n\nUse a file manager app to view them.'),
             actions: [
               TextButton(
                 onPressed: () => Navigator.pop(context),
@@ -198,16 +219,15 @@ class _MediaPlayerControlsScreenState extends State<MediaPlayerControlsScreen>
       );
 
       if (shouldContinue == true) {
-        //_showSnackBar('Showing black screen...', Colors.orange);
         final success = await ScreenService.showBlackOverlay();
         if (success) {
-          //_showSnackBar('Black screen activated', Colors.green);
+          // Success message if needed
         } else {
-          //_showSnackBar('Failed to show black screen', Colors.red);
+          // Error message if needed
         }
       }
     } catch (e) {
-      //_showSnackBar('Error: ${e.toString()}', Colors.red);
+      // Error handling if needed
     }
   }
 
@@ -255,14 +275,74 @@ class _MediaPlayerControlsScreenState extends State<MediaPlayerControlsScreen>
                       ConnectivityStatusCard(
                         connectivityService: _connectivityService,
                       ),
-                      const SizedBox(height: 10),
+                      const SizedBox(height: 0),
                       DeviceInfoCard(deviceDetails: _deviceDetails),
-                      const SizedBox(height: 10),
+                      const SizedBox(height: 0),
                       VolumeControlCard(
                         volumeService: _volumeService,
                         onShowSnackBar: _showSnackBar,
                       ),
-                      const SizedBox(height: 10),
+                      const SizedBox(height: 0),
+                  // ✅ ADD AUTO-LAUNCH TOGGLE HERE
+                      Container(
+                        margin: const EdgeInsets.symmetric(
+                            horizontal: 5, vertical: 8),
+                        padding: const EdgeInsets.all(16),
+                        decoration: BoxDecoration(
+                          gradient: LinearGradient(
+                            colors: _autoOpenEnabled
+                                ? [
+                                    Colors.green.shade900.withOpacity(0.3),
+                                    const Color(0xFF161B22)
+                                  ]
+                                : [
+                                    Colors.grey.shade900.withOpacity(0.3),
+                                    const Color(0xFF161B22)
+                                  ],
+                          ),
+                          borderRadius: BorderRadius.circular(16),
+                          border: Border.all(
+                            color: _autoOpenEnabled
+                                ? Colors.greenAccent
+                                : Colors.grey.shade700,
+                          ),
+                        ),
+                        child: Row(
+                          children: [
+                            Icon(
+                              _autoOpenEnabled ? Icons.touch_app : Icons.block,
+                              color: _autoOpenEnabled
+                                  ? Colors.greenAccent
+                                  : Colors.grey,
+                            ),
+                            const SizedBox(width: 10),
+                            Expanded(
+                              child: Text(
+                                _autoOpenEnabled
+                                    ? 'Signage App - Auto launch ENABLED'
+                                    : 'Signage App - Auto launch DISABLED',
+                                style: const TextStyle(color: Colors.white),
+                              ),
+                            ),
+                            Switch(
+                              value: _autoOpenEnabled,
+                              onChanged: (bool value) async {
+                                setState(() {
+                                  _autoOpenEnabled = value;
+                                });
+                                await _saveAutoOpenSetting(value);
+
+                                if (value) {
+                                  // Optional: trigger once immediately when turned ON
+                                  _autoClickOpenWaulyApp();
+                                }
+                              },
+                            ),
+                          ],
+                        ),
+                      ),
+                      const SizedBox(height: 0),
+                      // All buttons in a single row
                       Row(
                         children: [
                           Expanded(
@@ -276,32 +356,20 @@ class _MediaPlayerControlsScreenState extends State<MediaPlayerControlsScreen>
                                   ),
                                 );
                               },
-                              icon: const Icon(Icons.monitor_heart),
+                              icon: const Icon(Icons.monitor_heart, size: 18),
                               label: const Text('Event Monitor'),
                               style: ElevatedButton.styleFrom(
                                 backgroundColor: Colors.purple,
                                 foregroundColor: Colors.white,
+                                padding:
+                                    const EdgeInsets.symmetric(vertical: 12),
                                 shape: RoundedRectangleBorder(
                                   borderRadius: BorderRadius.circular(12),
                                 ),
+                                textStyle: const TextStyle(fontSize: 12),
                               ),
                             ),
                           ),
-                          const SizedBox(width: 8),
-                          // Expanded(
-                          //   child: ElevatedButton.icon(
-                          //     onPressed: _openScreenshotsFolder,
-                          //     icon: const Icon(Icons.folder),
-                          //     label: const Text('Screenshots Location'),
-                          //     style: ElevatedButton.styleFrom(
-                          //       backgroundColor: Colors.orange,
-                          //       foregroundColor: Colors.white,
-                          //       shape: RoundedRectangleBorder(
-                          //         borderRadius: BorderRadius.circular(12),
-                          //       ),
-                          //     ),
-                          //   ),
-                          // ),
                           const SizedBox(width: 8),
                           Expanded(
                             child: ElevatedButton.icon(
@@ -314,14 +382,17 @@ class _MediaPlayerControlsScreenState extends State<MediaPlayerControlsScreen>
                                   ),
                                 );
                               },
-                              icon: const Icon(Icons.photo_library),
+                              icon: const Icon(Icons.photo_library, size: 18),
                               label: const Text('View Gallery'),
                               style: ElevatedButton.styleFrom(
                                 backgroundColor: Colors.green,
                                 foregroundColor: Colors.white,
+                                padding:
+                                    const EdgeInsets.symmetric(vertical: 12),
                                 shape: RoundedRectangleBorder(
                                   borderRadius: BorderRadius.circular(12),
                                 ),
+                                textStyle: const TextStyle(fontSize: 12),
                               ),
                             ),
                           ),
@@ -329,18 +400,47 @@ class _MediaPlayerControlsScreenState extends State<MediaPlayerControlsScreen>
                           Expanded(
                             child: ElevatedButton.icon(
                               onPressed: _turnOffScreen,
-                              icon: const Icon(Icons.power_settings_new),
-                              label: const Text('Turn Off Screen'),
+                              icon: const Icon(Icons.power_settings_new,
+                                  size: 18),
+                              label: const Text('Turn Off'),
                               style: ElevatedButton.styleFrom(
                                 backgroundColor: Colors.red,
                                 foregroundColor: Colors.white,
+                                padding:
+                                    const EdgeInsets.symmetric(vertical: 12),
+                                shape: RoundedRectangleBorder(
+                                  borderRadius: BorderRadius.circular(12),
+                                ),
+                                textStyle: const TextStyle(fontSize: 12),
+                              ),
+                            ),
+                          ),
+                          const SizedBox(width: 8),
+                          Expanded(
+                            child: ElevatedButton.icon(
+                              onPressed: () async {
+                                await WaulyAppManager.handleAppFlow(context);
+                              },
+                              icon: const Icon(Icons.tv,
+                                  size: 18, color: Colors.white),
+                              label: const Text(
+                                'Open Wauly App',
+                                style: TextStyle(
+                                  fontSize: 12,
+                                  fontWeight: FontWeight.bold,
+                                  color: Colors.white,
+                                ),
+                              ),
+                              style: ElevatedButton.styleFrom(
+                                backgroundColor: const Color(0xFF2D3748),
+                                padding:
+                                    const EdgeInsets.symmetric(vertical: 12),
                                 shape: RoundedRectangleBorder(
                                   borderRadius: BorderRadius.circular(12),
                                 ),
                               ),
                             ),
                           ),
-                          const SizedBox(width: 8),
                         ],
                       ),
                     ],
