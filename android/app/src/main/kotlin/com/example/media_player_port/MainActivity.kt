@@ -34,6 +34,8 @@ import android.os.Looper
 import android.os.PowerManager
 import android.app.AlarmManager
 import android.app.PendingIntent
+import android.hardware.usb.UsbDevice
+import android.hardware.usb.UsbManager
 
 
 
@@ -46,10 +48,13 @@ class MainActivity : FlutterActivity() {
     private val METHOD_CHANNEL = "port_control"
     private val EVENT_CHANNEL = "com.example.media_player_port/monitoring_events"
     private val CHANNEL = "com.example.media_player/screen"
+    private val USB_CHANNEL = "usb_detection"
+    private val USB_EVENT_CHANNEL = "usb_detection_events"
 
     companion object {
         private const val PREFS_NAME = "WaulyMonitorPrefs"
         private const val KEY_EVENT_HISTORY = "event_history"
+        private const val METHOD_CHANNEL = "port_control"   
     }
     
     // Custom TAG for logging
@@ -63,6 +68,7 @@ class MainActivity : FlutterActivity() {
     
     // Event channel handlers
     private var eventSink: EventChannel.EventSink? = null
+    private var usbEventSink: EventChannel.EventSink? = null
     
     // Message history
     private val messageHistory = CopyOnWriteArrayList<Map<String, Any>>()
@@ -80,12 +86,52 @@ class MainActivity : FlutterActivity() {
         setupMethodChannel(flutterEngine)
         setupEventChannel(flutterEngine)
         setupScreenChannel(flutterEngine)
+        setupUsbChannel(flutterEngine)
+        setupMethodChannel(flutterEngine)
         
         // Register Broadcast Receivers
         registerBroadcastReceivers()
 
         Log.d(TAG, "✅ Flutter Engine configured")
     }
+
+    private val usbReceiver = object : BroadcastReceiver() {
+    override fun onReceive(context: Context?, intent: Intent?) {
+        when (intent?.action) {
+            UsbManager.ACTION_USB_DEVICE_ATTACHED -> {
+                val device =
+                    intent.getParcelableExtra<UsbDevice>(
+                        UsbManager.EXTRA_DEVICE
+                    )
+                val deviceName =
+                    device?.deviceName ?: "Unknown USB"
+                Log.d(TAG, "USB ATTACHED: $deviceName")
+                usbEventSink?.success(
+                    mapOf(
+                        "event" to "USB_ATTACHED",
+                        "deviceName" to deviceName
+                    )
+                )
+            }
+
+            UsbManager.ACTION_USB_DEVICE_DETACHED -> {
+                val device =
+                    intent.getParcelableExtra<UsbDevice>(
+                        UsbManager.EXTRA_DEVICE
+                    )
+                val deviceName =
+                    device?.deviceName ?: "Unknown USB"
+                Log.d(TAG, "USB DETACHED: $deviceName")
+                usbEventSink?.success(
+                    mapOf(
+                        "event" to "USB_DETACHED",
+                        "deviceName" to deviceName
+                    )
+                )
+            }
+        }
+    }
+}
 
     // SYSTEM INFO METHODS
     private fun getTotalRAM(): String {
@@ -363,114 +409,120 @@ class MainActivity : FlutterActivity() {
     }
 
     private fun setupOrientationChannel(flutterEngine: FlutterEngine) {
-        MethodChannel(flutterEngine.dartExecutor.binaryMessenger, ORIENTATION_CHANNEL)
-            .setMethodCallHandler { call, result ->
-                when (call.method) {
-                    "setPortrait" -> {
-                        val success = setPortraitOrientation()
-                        result.success(success)
-                    }
-                    "setLandscape" -> {
-                        val success = setLandscapeOrientation()
-                        result.success(success)
-                    }
-                    "setAuto" -> {
-                        val success = setAutoOrientation()
-                        result.success(success)
-                    }
-                    "getCurrentOrientation" -> {
-                        val orientation = getCurrentOrientation()
-                        result.success(orientation)
-                    }
-                    else -> {
-                        result.notImplemented()
-                    }
-                }
-            }
-    }
-
-    private fun setupSystemInfoChannel(flutterEngine: FlutterEngine) {
-        MethodChannel(flutterEngine.dartExecutor.binaryMessenger, SYSTEM_INFO_CHANNEL)
-            .setMethodCallHandler { call, result ->
-                when (call.method) {
-                    "getTotalRAM" -> {
-                        val ram = getTotalRAM()
-                        result.success(ram)
-                    }
-                    "getTotalStorage" -> {
-                        val storage = getTotalStorage()
-                        result.success(storage)
-                    }
-                    "getMacAddress" -> {
-                        val interfaceName = call.argument<String>("interface")
-                        val mac = getMacAddress(interfaceName)
-                        result.success(mac)
-                    }
-                    "getDisplaySize" -> {
-                        val size = getDisplaySize()
-                        result.success(size)
-                    }
-                    "getDisplayDensity" -> {
-                        val density = getDisplayDensity()
-                        result.success(density)
-                    }
-                    "getBatteryLevel" -> {
-                        val level = getBatteryLevel()
-                        result.success(level)
-                    }
-                    else -> {
-                        result.notImplemented()
-                    }
-                }
-            }
-    }
-
-    private fun setupMethodChannel(flutterEngine: FlutterEngine) {
-        methodChannel = MethodChannel(flutterEngine.dartExecutor.binaryMessenger, METHOD_CHANNEL)
-        
-        methodChannel.setMethodCallHandler { call, result ->
-            Log.d(TAG, "📞 Method called: ${call.method}")
-            
+    MethodChannel(flutterEngine.dartExecutor.binaryMessenger, ORIENTATION_CHANNEL)
+        .setMethodCallHandler { call, result ->
             when (call.method) {
-                "getWaulyStatus" -> {
-                    result.success(getWaulyStatus())
+
+                "setOrientation" -> {
+                    val orientation = call.argument<Int>("orientation") ?: 1
+                    Log.d("ROTATION", "Setting orientation to: $orientation")
+                    requestedOrientation = orientation
+                    Log.d("ROTATION", "requestedOrientation set: $requestedOrientation")
+                    result.success(true)
                 }
-                "loadMessageHistory" -> {
-                    result.success(loadMessageHistory())
+
+                "getDeviceInfo" -> {
+                    val config = resources.configuration
+                    val isTV =
+                        packageManager.hasSystemFeature("android.hardware.type.television") ||
+                        packageManager.hasSystemFeature("android.software.leanback")
+                    val info = mapOf(
+                        "isTV"                 to isTV,
+                        "currentOrientation"   to config.orientation,
+                        "requestedOrientation" to requestedOrientation,
+                    )
+                    Log.d("ROTATION", "requestedOrientation set: $requestedOrientation")
+                    result.success(info)
                 }
-                "saveMessageHistory" -> {
-                    val history = call.argument<String>("history")
-                    saveMessageHistory(history)
-                    result.success(null)
-                }
-                "clearWaulyData" -> {
-                    clearWaulyData()
-                    result.success(null)
-                }
-                "testConnection" -> {
-                    testConnection(result)
-                }
-                "sendSelfTest" -> {
-                    sendSelfTest(result)
-                }
-                "getEvents" -> {
-                    result.success(getEvents())
-                }
-                "getSystemInfo" -> {
-                    result.success(getSystemInfo())
-                }
-                "getDeviceStatus" -> {
-                    result.success(getDeviceStatus())
-                }
-                "ping" -> {
-                    result.success("pong from Android")
-                }
-                else -> {
-                    result.notImplemented()
-                }
+
+                else -> result.notImplemented()
             }
         }
     }
+    
+
+    private fun setupMethodChannel(flutterEngine: FlutterEngine) {
+        methodChannel = MethodChannel(flutterEngine.dartExecutor.binaryMessenger, METHOD_CHANNEL)
+        methodChannel.setMethodCallHandler { call, result ->
+            Log.d(TAG, "📞 Method called: ${call.method}")
+            when (call.method) {
+                "getWaulyStatus"     -> result.success(getWaulyStatus())
+                "loadMessageHistory" -> result.success(loadMessageHistory())
+                "saveMessageHistory" -> {
+                    saveMessageHistory(call.argument("history"))
+                    result.success(null)
+                }
+                "clearWaulyData"  -> { clearWaulyData(); result.success(null) }
+                "testConnection"  -> testConnection(result)
+                "sendSelfTest"    -> sendSelfTest(result)
+                "getEvents"       -> result.success(getEvents())
+                "getSystemInfo"   -> result.success(getSystemInfo())
+                "getDeviceStatus" -> result.success(getDeviceStatus())
+                "ping"            -> result.success("pong from Android")
+
+                "getRegisteredMethods" -> {
+                    val methods = listOf(
+                        "getWaulyStatus", "loadMessageHistory", "saveMessageHistory",
+                        "clearWaulyData", "testConnection", "sendSelfTest", "getEvents",
+                        "getSystemInfo", "getDeviceStatus", "ping", "getStorageInfo"
+                    )
+                    result.success(methods)
+                }
+
+                // ✅ ADD THIS
+                "getStorageInfo"  -> {
+                    Log.d(TAG, "📦 getStorageInfo called via METHOD_CHANNEL")
+                    try {
+                        val storageResults = mutableListOf<Map<String, Any>>()
+
+                        // Internal
+                        val intStat   = StatFs(Environment.getDataDirectory().path)
+                        val intTotal  = intStat.blockCountLong * intStat.blockSizeLong
+                        val intFree   = intStat.availableBlocksLong * intStat.blockSizeLong
+                        storageResults.add(mapOf(
+                            "label" to "Internal",
+                            "total" to intTotal,
+                            "free"  to intFree,
+                            "used"  to (intTotal - intFree),
+                            "path"  to Environment.getDataDirectory().path
+                        ))
+
+                        // External / USB
+                        getExternalFilesDirs(null)
+                            .filterNotNull()
+                            .forEachIndexed { index, dir ->
+                                try {
+                                    val stat  = StatFs(dir.path)
+                                    val total = stat.blockCountLong * stat.blockSizeLong
+                                    val free  = stat.availableBlocksLong * stat.blockSizeLong
+                                    if (total > 0) {
+                                        storageResults.add(mapOf(
+                                            "label" to if (index == 0) "SD Card"
+                                                    else "USB Drive $index",
+                                            "total" to total,
+                                            "free"  to free,
+                                            "used"  to (total - free),
+                                            "path"  to dir.path
+                                        ))
+                                    }
+                                } catch (e: Exception) {
+                                    Log.e(TAG, "External storage error: ${e.message}")
+                                }
+                            }
+
+                        Log.d(TAG, "📦 Returning ${storageResults.size} items")
+                        result.success(storageResults)
+                    } catch (e: Exception) {
+                        Log.e(TAG, "❌ getStorageInfo error: ${e.message}")
+                        result.error("STORAGE_ERROR", e.message, null)
+                    }
+                }
+
+                else -> result.notImplemented()
+            }
+        }
+    }
+
 
     private fun setupEventChannel(flutterEngine: FlutterEngine) {
         EventChannel(flutterEngine.dartExecutor.binaryMessenger, EVENT_CHANNEL).setStreamHandler(
@@ -489,6 +541,55 @@ class MainActivity : FlutterActivity() {
                 }
             }
         )
+    }
+
+    private fun setupUsbChannel(flutterEngine: FlutterEngine) {
+    MethodChannel(
+        flutterEngine.dartExecutor.binaryMessenger,
+        USB_CHANNEL
+    ).setMethodCallHandler { call, result ->
+
+        when (call.method) {
+
+            "getPlatformVersion" -> {
+                result.success("Android")
+            }
+
+            else -> {
+                result.notImplemented()
+            }
+        }
+    }
+
+    EventChannel(
+        flutterEngine.dartExecutor.binaryMessenger,
+        USB_EVENT_CHANNEL
+    ).setStreamHandler(object : EventChannel.StreamHandler {
+        override fun onListen(
+            arguments: Any?,
+            events: EventChannel.EventSink?
+        ) {
+            usbEventSink = events
+            val filter = IntentFilter()
+            filter.addAction(
+                UsbManager.ACTION_USB_DEVICE_ATTACHED
+            )
+            filter.addAction(
+                UsbManager.ACTION_USB_DEVICE_DETACHED
+            )
+            registerReceiver(usbReceiver, filter)
+            Log.d(TAG, "USB Receiver Registered")
+        }
+
+        override fun onCancel(arguments: Any?) {
+            try {
+                unregisterReceiver(usbReceiver)
+            } catch (e: Exception) {
+                Log.e(TAG, "USB Receiver unregister error")
+            }
+            usbEventSink = null
+        }
+    })
     }
 
     // Update the waulyBroadcastReceiver in MainActivity to have more prominent logging
@@ -975,15 +1076,6 @@ class MainActivity : FlutterActivity() {
         return sdf.format(Date())
     }
 
-    // override fun onDestroy() {
-    //     super.onDestroy()
-    //     try {
-    //         unregisterReceiver(waulyBroadcastReceiver)
-    //     } catch (e: Exception) {
-    //         Log.e(TAG, "Error unregistering receiver: ${e.message}")
-    //     }
-    // }
-
     override fun onDestroy() {
         Log.d(TAG, "💥 Activity destroyed, isExiting: $isExiting")
         
@@ -1275,14 +1367,6 @@ class MainActivity : FlutterActivity() {
     super.finish()
     }  
 
-    // override fun onDestroy() {
-    // Log.d(TAG, "💥 Activity destroyed, isExiting: $isExiting")
-    
-    // // Final cleanup
-    // releaseAllResources()
-    
-    // super.onDestroy()
-    // }
 
     private fun cleanupBeforeExit() {
     Log.d(TAG, "🧹 Cleaning up before exit")
@@ -1322,5 +1406,3 @@ class MainActivity : FlutterActivity() {
     System.gc()
     }
 }
-
-            

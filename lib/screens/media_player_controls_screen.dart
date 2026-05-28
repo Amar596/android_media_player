@@ -1,11 +1,14 @@
+import 'dart:async';
 import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:media_player_port/screens/ScreenshotGalleryScreen.dart';
 import 'package:media_player_port/screens/wauly_monitor_screen.dart';
 import 'package:media_player_port/services/ScreenshotService.dart';
 import 'package:media_player_port/services/connectivity_service.dart';
+import 'package:media_player_port/services/usb_detection_service.dart';
 import 'package:media_player_port/services/wauly_app_service.dart';
 import 'package:media_player_port/widgets/connectivity_status_card.dart';
+import 'package:media_player_port/widgets/storage_card.dart';
 import 'package:path_provider/path_provider.dart';
 import 'package:screenshot/screenshot.dart';
 import 'package:shared_preferences/shared_preferences.dart';
@@ -42,9 +45,14 @@ class _MediaPlayerControlsScreenState extends State<MediaPlayerControlsScreen>
   Map<String, dynamic>? _deviceDetails;
   bool _isLoading = true;
   bool _isCapturing = false;
+  String _appVersion = '';
+  String _currentDateTime = '';
 
   late AnimationController _animationController;
   late Animation<double> _fadeAnimation;
+
+  late UsbDetectionService _usbService;
+  StreamSubscription? _usbSubscription;
 
   bool _isDisposed = false;
   bool _autoOpenEnabled = false;
@@ -55,6 +63,26 @@ class _MediaPlayerControlsScreenState extends State<MediaPlayerControlsScreen>
     _initializeServices();
     _setupAnimation();
     _loadAutoOpenSetting();
+
+    _usbService = UsbDetectionService();
+
+    _usbSubscription = _usbService.usbEvents.listen((event) {
+      debugPrint("USB EVENT: $event");
+
+      if (event == "USB_ATTACHED") {
+        _showSnackBar(
+          "USB Device Connected",
+          Colors.green,
+        );
+      }
+
+      if (event == "USB_DETACHED") {
+        _showSnackBar(
+          "USB Device Removed",
+          Colors.red,
+        );
+      }
+    });
   }
 
   @override
@@ -63,6 +91,7 @@ class _MediaPlayerControlsScreenState extends State<MediaPlayerControlsScreen>
     _volumeService.dispose();
     _connectivityService.dispose();
     super.dispose();
+    _usbSubscription?.cancel();
   }
 
   void _setupAnimation() {
@@ -267,10 +296,11 @@ class _MediaPlayerControlsScreenState extends State<MediaPlayerControlsScreen>
                 child:
                     CircularProgressIndicator(color: AppConstants.primaryColor))
             : SingleChildScrollView(
-                padding: const EdgeInsets.all(10.0),
+                padding: const EdgeInsets.all(8.0),
                 child: FadeTransition(
                   opacity: _fadeAnimation,
                   child: Column(
+                    mainAxisSize: MainAxisSize.min,
                     children: [
                       ConnectivityStatusCard(
                         connectivityService: _connectivityService,
@@ -282,8 +312,12 @@ class _MediaPlayerControlsScreenState extends State<MediaPlayerControlsScreen>
                         volumeService: _volumeService,
                         onShowSnackBar: _showSnackBar,
                       ),
-                      const SizedBox(height: 0),
-                  // ✅ ADD AUTO-LAUNCH TOGGLE HERE
+                      const SizedBox(height: 8),
+                      // const RotationControlCard(),
+                      // const SizedBox(height: 8),
+                      // const StorageCard(),
+                      // const SizedBox(height: 8),
+                      // ✅ ADD AUTO-LAUNCH TOGGLE HERE
                       Container(
                         margin: const EdgeInsets.symmetric(
                             horizontal: 5, vertical: 8),
@@ -342,6 +376,48 @@ class _MediaPlayerControlsScreenState extends State<MediaPlayerControlsScreen>
                         ),
                       ),
                       const SizedBox(height: 0),
+                      Container(
+                        margin: const EdgeInsets.symmetric(
+                            horizontal: 5, vertical: 8),
+                        padding: const EdgeInsets.all(14),
+                        decoration: BoxDecoration(
+                          color: Colors.grey,
+                          borderRadius: BorderRadius.circular(12),
+                          border: Border.all(
+                              color: Colors.greenAccent.withOpacity(0.4)),
+                        ),
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            const Row(
+                              children: [
+                                Icon(Icons.info_outline,
+                                    color: Colors.greenAccent, size: 18),
+                                SizedBox(width: 8),
+                                Text(
+                                  'Signage App Status',
+                                  style: TextStyle(
+                                    color: Colors.black,
+                                    fontWeight: FontWeight.bold,
+                                  ),
+                                ),
+                              ],
+                            ),
+                            const SizedBox(height: 0),
+                            Text(
+                              'Version: $_appVersion',
+                              style: const TextStyle(
+                                  color: Colors.black, fontSize: 13),
+                            ),
+                            const SizedBox(height: 0),
+                            Text(
+                              'Time: $_currentDateTime',
+                              style: const TextStyle(
+                                  color: Colors.black, fontSize: 13),
+                            ),
+                          ],
+                        ),
+                      ),
                       // All buttons in a single row
                       Row(
                         children: [

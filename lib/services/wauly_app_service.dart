@@ -60,7 +60,7 @@ class _AutoClickableAlertDialogState extends State<AutoClickableAlertDialog> {
   @override
   void initState() {
     super.initState();
-
+    //testChannel();
     // Auto-click after dialog is built
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (!_autoClicked) {
@@ -68,6 +68,24 @@ class _AutoClickableAlertDialogState extends State<AutoClickableAlertDialog> {
       }
     });
   }
+
+  // Future<void> checkRegisteredMethods() async {
+  //   try {
+  //     final methods = await platform.invokeMethod('getRegisteredMethods');
+  //     print('✅ Registered methods: $methods');
+  //   } catch (e) {
+  //     print('❌ Failed to get methods: $e');
+  //   }
+  // } 
+  
+  // Future<void> testChannel() async {
+  //   try {
+  //     final result = await platform.invokeMethod('ping');
+  //     print('✅ Channel working! Response: $result');
+  //   } catch (e) {
+  //     print('❌ Channel test failed: $e');
+  //   }
+  // }
 
   Future<void> _autoClickUpdateButton() async {
     // Small delay to ensure dialog is fully rendered

@@ -25,7 +25,7 @@ class VolumeControlCard extends StatelessWidget {
           children: [
             _buildHeader(),
             const SizedBox(height: 8),
-            _buildSlider(),
+            _buildVolumeControls(),
             if (!volumeService.isAvailable) _buildNotAvailableText(),
           ],
         ),
@@ -51,46 +51,107 @@ class VolumeControlCard extends StatelessWidget {
             color: volumeService.isAvailable ? Colors.black87 : Colors.grey,
           ),
         ),
+        const Spacer(),
+        if (volumeService.isAvailable) _buildMuteButton(),
       ],
     );
   }
 
-  Widget _buildSlider() {
+  Widget _buildMuteButton() {
+    return ValueListenableBuilder(
+      valueListenable: _VolumeNotifier(volumeService),
+      builder: (context, _, __) {
+        return IconButton(
+          icon: Icon(
+            volumeService.isMuted ? Icons.volume_off : Icons.volume_up,
+            color:
+                volumeService.isMuted ? Colors.grey : AppConstants.primaryColor,
+          ),
+          onPressed: () => _toggleMute(),
+          tooltip: volumeService.isMuted ? 'Unmute' : 'Mute',
+        );
+      },
+    );
+  }
+
+  Widget _buildVolumeControls() {
     return Row(
       children: [
-        const Icon(Icons.volume_down, size: 20, color: Colors.grey),
+        IconButton(
+          icon: const Icon(Icons.remove_circle_outline, size: 24),
+          onPressed: volumeService.isAvailable ? () => _decreaseVolume() : null,
+          color: AppConstants.primaryColor,
+        ),
         Expanded(
-          child: Slider(
-            value: volumeService.currentVolume,
-            onChanged: volumeService.isAvailable
-                ? (value) => _onSliderChanged(value)
-                : null,
-            onChangeEnd: volumeService.isAvailable
-                ? (value) => _onSliderChangeEnd(value)
-                : null,
-            min: 0.0,
-            max: 1.0,
-            divisions: 20,
-            activeColor: AppConstants.primaryColor,
-            inactiveColor: Colors.grey[300],
-            label: '${(volumeService.currentVolume * 100).round()}%',
+          child: ValueListenableBuilder(
+            valueListenable: _VolumeNotifier(volumeService),
+            builder: (context, _, __) {
+              return Slider(
+                value: volumeService.currentVolume,
+                onChanged: volumeService.isAvailable
+                    ? (value) => _onSliderChanged(value)
+                    : null,
+                onChangeEnd: volumeService.isAvailable
+                    ? (value) => _onSliderChangeEnd(value)
+                    : null,
+                min: 0.0,
+                max: 1.0,
+                divisions: 20,
+                activeColor: AppConstants.primaryColor,
+                inactiveColor: Colors.grey[300],
+                label: volumeService.isMuted
+                    ? 'Muted'
+                    : '${(volumeService.currentVolume * 100).round()}%',
+              );
+            },
           ),
         ),
-        const Icon(Icons.volume_up, size: 20, color: Colors.grey),
+        IconButton(
+          icon: const Icon(Icons.add_circle_outline, size: 24),
+          onPressed: volumeService.isAvailable ? () => _increaseVolume() : null,
+          color: AppConstants.primaryColor,
+        ),
       ],
     );
   }
 
   void _onSliderChanged(double value) {
-    // Preview change without applying
+    // Preview change without applying - you might want to show a preview
   }
 
   Future<void> _onSliderChangeEnd(double value) async {
     await volumeService.setVolume(value);
-    // onShowSnackBar(
-    //   'Volume set to ${(value * 100).round()}%',
-    //   AppConstants.successColor,
-    // );
+    if (!volumeService.isMuted && value > 0) {
+      onShowSnackBar(
+        'Volume set to ${(value * 100).round()}%',
+        AppConstants.successColor,
+      );
+    } else if (value == 0) {
+      onShowSnackBar(
+        'Volume muted',
+        AppConstants.warningColor, // Make sure you have this color
+      );
+    }
+  }
+
+  Future<void> _toggleMute() async {
+    await volumeService.toggleMute();
+    onShowSnackBar(
+      volumeService.isMuted ? 'Volume muted' : 'Volume unmuted',
+      volumeService.isMuted
+          ? AppConstants.warningColor
+          : AppConstants.successColor,
+    );
+  }
+
+  Future<void> _decreaseVolume() async {
+    double newVolume = (volumeService.currentVolume - 0.05).clamp(0.0, 1.0);
+    await volumeService.setVolume(newVolume);
+  }
+
+  Future<void> _increaseVolume() async {
+    double newVolume = (volumeService.currentVolume + 0.05).clamp(0.0, 1.0);
+    await volumeService.setVolume(newVolume);
   }
 
   Widget _buildNotAvailableText() {
@@ -101,5 +162,15 @@ class VolumeControlCard extends StatelessWidget {
         style: TextStyle(color: Colors.grey, fontSize: 12),
       ),
     );
+  }
+}
+
+// Helper class to make VolumeService listenable
+class _VolumeNotifier extends ValueNotifier<void> {
+  final VolumeService volumeService;
+
+  _VolumeNotifier(this.volumeService) : super(null) {
+    // You'll need to add a way to notify when volume changes
+    // One approach: modify VolumeService to accept a callback or use StreamController
   }
 }
