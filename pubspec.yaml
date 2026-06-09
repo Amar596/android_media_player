@@ -39,7 +39,6 @@ dependencies:
   device_info_plus: ^9.1.0
   auto_orientation: ^2.2.0
   screenshot: ^2.1.0
-  ##gallery_saver: ^2.3.0
   screen_brightness: ^1.0.0
   path_provider: ^2.1.1
   shared_preferences: ^2.2.2

@@ -36,6 +36,8 @@ import android.app.AlarmManager
 import android.app.PendingIntent
 import android.hardware.usb.UsbDevice
 import android.hardware.usb.UsbManager
+import androidx.core.content.FileProvider
+import android.content.pm.PackageManager
 
 
 
@@ -55,6 +57,7 @@ class MainActivity : FlutterActivity() {
         private const val PREFS_NAME = "WaulyMonitorPrefs"
         private const val KEY_EVENT_HISTORY = "event_history"
         private const val METHOD_CHANNEL = "port_control"   
+        const val APK_CHANNEL = "apk_install"
     }
     
     // Custom TAG for logging
@@ -88,6 +91,8 @@ class MainActivity : FlutterActivity() {
         setupScreenChannel(flutterEngine)
         setupUsbChannel(flutterEngine)
         setupMethodChannel(flutterEngine)
+        setupAutoInstallChannel(flutterEngine)
+        setupApkChannel(flutterEngine)
         
         // Register Broadcast Receivers
         registerBroadcastReceivers()
@@ -439,6 +444,111 @@ class MainActivity : FlutterActivity() {
             }
         }
     }
+
+    private fun setupApkChannel(flutterEngine: FlutterEngine) {
+    MethodChannel(flutterEngine.dartExecutor.binaryMessenger, APK_CHANNEL)
+        .setMethodCallHandler { call, result ->
+            when (call.method) {
+                "installApk" -> {
+                    val path = call.argument<String>("path")
+                    if (path != null) {
+                        installApk(path)
+                        result.success(true)
+                    } else {
+                        result.error("ERROR", "Path is null", null)
+                    }
+                }
+                "getPackageVersion" -> {
+                    val packageName = call.argument<String>("packageName")
+                    if (packageName != null) {
+                        val version = getPackageVersion(packageName)
+                        result.success(version)
+                    } else {
+                        result.error("ERROR", "Package name is null", null)
+                    }
+                }
+                "getPackageVersionCode" -> {
+                    val packageName = call.argument<String>("packageName")
+                    if (packageName != null) {
+                        val versionCode = getPackageVersionCode(packageName)
+                        result.success(versionCode)
+                    } else {
+                        result.error("ERROR", "Package name is null", null)
+                    }
+                }
+                else -> result.notImplemented()
+            }
+        }
+    }
+
+    private fun setupAutoInstallChannel(flutterEngine: FlutterEngine) {
+    MethodChannel(flutterEngine.dartExecutor.binaryMessenger, "auto_install")
+        .setMethodCallHandler { call, result ->
+            when (call.method) {
+                "autoClickInstall" -> {
+                    AutoInstallService.autoClickInstall()
+                    result.success(true)
+                }
+                "isAccessibilityEnabled" -> {
+                    val enabled = isAccessibilityServiceEnabled()
+                    result.success(enabled)
+                }
+                "requestAccessibility" -> {
+                    openAccessibilitySettings()
+                    result.success(true)
+                }
+                "resetFlags" -> {
+                    AutoInstallService.resetFlags()
+                    result.success(true)
+                }
+                "autoClickUpdateButton" -> {
+                    val buttonText = call.argument<String>("buttonText")
+                    AutoInstallService.autoClickUpdateButton(buttonText ?: "Update Now")
+                    result.success(true)
+                }
+                "isUpdateDialogShowing" -> {
+                    val isShowing = AutoInstallService.checkForUpdateDialog()
+                    result.success(isShowing)
+                }
+                "forceCheckForDialog" -> {
+                    AutoInstallService.instance?.forceCheckForDialog()
+                    result.success(true)
+                }
+                else -> result.notImplemented()
+            }
+        }
+    }
+
+    private fun setupSystemInfoChannel(flutterEngine: FlutterEngine) {
+    MethodChannel(flutterEngine.dartExecutor.binaryMessenger, SYSTEM_INFO_CHANNEL)
+        .setMethodCallHandler { call, result ->
+            when (call.method) {
+                "getTotalRAM" -> result.success(getTotalRAM())
+                "getTotalStorage" -> result.success(getTotalStorage())
+                "getMacAddress" -> {
+                    val interfaceName = call.argument<String>("interface")
+                    result.success(getMacAddress(interfaceName))
+                }
+                "getDisplaySize" -> result.success(getDisplaySize())
+                "getDisplayDensity" -> result.success(getDisplayDensity())
+                "getBatteryLevel" -> result.success(getBatteryLevel())
+                "getAllInfo" -> {
+                    result.success(mapOf(
+                        "totalRAM"       to getTotalRAM(),
+                        "totalStorage"   to getTotalStorage(),
+                        "displaySize"    to getDisplaySize(),
+                        "displayDensity" to getDisplayDensity(),
+                        "batteryLevel"   to getBatteryLevel(),
+                        "macAddress"     to getMacAddress(null),
+                        "model"          to Build.MODEL,
+                        "manufacturer"   to Build.MANUFACTURER,
+                        "androidVersion" to Build.VERSION.RELEASE
+                    ))
+                }
+                else -> result.notImplemented()
+            }
+        }
+    }
     
 
     private fun setupMethodChannel(flutterEngine: FlutterEngine) {
@@ -541,6 +651,137 @@ class MainActivity : FlutterActivity() {
                 }
             }
         )
+    }
+
+        // SINGLE getPackageVersion method (ONLY ONE)
+    private fun getPackageVersion(packageName: String): String? {
+        return try {
+            val packageInfo = packageManager.getPackageInfo(packageName, 0)
+            Log.d(TAG, "✅ Package $packageName found, version: ${packageInfo.versionName}")
+            packageInfo.versionName
+        } catch (e: PackageManager.NameNotFoundException) {
+            Log.d(TAG, "ℹ️ Package not found: $packageName (this is normal if app not installed)")
+            null
+        }
+    }
+
+    // getPackageVersionCode method (ADD THIS)
+    private fun getPackageVersionCode(packageName: String): Int? {
+        return try {
+            val packageInfo = packageManager.getPackageInfo(packageName, 0)
+            val versionCode = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
+                packageInfo.longVersionCode.toInt()
+            } else {
+                packageInfo.versionCode
+            }
+            Log.d(TAG, "✅ Package $packageName versionCode: $versionCode")
+            versionCode
+        } catch (e: PackageManager.NameNotFoundException) {
+            Log.d(TAG, "ℹ️ Package not found: $packageName")
+            null
+        }
+    }
+
+    private fun isAccessibilityServiceEnabled(): Boolean {
+        val expectedService1 = "$packageName/.AutoInstallService"
+        val expectedService2 = "$packageName/$packageName.AutoInstallService"
+
+        val enabledServices = Settings.Secure.getString(
+            contentResolver,
+            Settings.Secure.ENABLED_ACCESSIBILITY_SERVICES
+        ) ?: return false
+
+        Log.d("ACCESS", "Enabled services: $enabledServices")
+
+        return enabledServices.contains(expectedService1) ||
+            enabledServices.contains(expectedService2)
+    }
+
+    private fun openAccessibilitySettings() {
+    val intent = try {
+        // Deep-link directly to our service's toggle page
+        Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS).apply {
+            flags = Intent.FLAG_ACTIVITY_NEW_TASK
+            val componentName = "$packageName/.AutoInstallService"
+            putExtra(":settings:fragment_args_key", componentName)
+            putExtra(":settings:show_fragment_args", android.os.Bundle().apply {
+                putString(":settings:fragment_args_key", componentName)
+            })
+        }
+    } catch (e: Exception) {
+        Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS).apply {
+            flags = Intent.FLAG_ACTIVITY_NEW_TASK
+        }
+    }
+    startActivity(intent)
+    Log.d(TAG, "Opened accessibility settings for $packageName/.AutoInstallService")
+    }
+
+
+    private fun installApk(path: String) {
+    try {
+        Log.d(TAG, "📲 Installing APK from: $path")
+        
+        // Check if we can install packages
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            if (!canInstallPackages()) {
+                Log.d(TAG, "Requesting install permission")
+                requestInstallPermission()
+                return
+            }
+        }
+        
+        val file = File(path)
+        if (!file.exists()) {
+            Log.e(TAG, "❌ APK file does not exist at: $path")
+            return
+        }
+
+        val uri: Uri = FileProvider.getUriForFile(
+            this,
+            "$packageName.provider",
+            file
+        )
+
+        val intent = Intent(Intent.ACTION_VIEW).apply {
+            setDataAndType(uri, "application/vnd.android.package-archive")
+            flags = Intent.FLAG_ACTIVITY_NEW_TASK
+            addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+            addFlags(Intent.FLAG_GRANT_WRITE_URI_PERMISSION)
+        }
+
+        // Check if installer exists
+        if (intent.resolveActivity(packageManager) != null) {
+            startActivity(intent)
+            Log.d(TAG, "✅ APK install intent launched")
+            
+            // Give time for the installer to open and trigger accessibility
+            Handler(Looper.getMainLooper()).postDelayed({
+                Log.d(TAG, "Waiting for accessibility service to handle install...")
+            }, 500)
+        } else {
+            Log.e(TAG, "❌ No app found to handle APK install")
+        }
+
+    } catch (e: Exception) {
+        Log.e(TAG, "❌ APK install failed: ${e.message}")
+    }
+    }
+
+    private fun canInstallPackages(): Boolean {
+        return if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            packageManager.canRequestPackageInstalls()
+        } else {
+            true
+        }
+    }
+
+    private fun requestInstallPermission() {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            val intent = Intent(Settings.ACTION_MANAGE_UNKNOWN_APP_SOURCES)
+            intent.data = Uri.parse("package:$packageName")
+            startActivity(intent)
+        }
     }
 
     private fun setupUsbChannel(flutterEngine: FlutterEngine) {
@@ -1352,10 +1593,26 @@ class MainActivity : FlutterActivity() {
     finishAffinity()
     }
 
+    // override fun onResume() {
+    // super.onResume()
+    // // Reset exit flag when app comes to foreground
+    // isExiting = false
+    // }
+
     override fun onResume() {
     super.onResume()
-    // Reset exit flag when app comes to foreground
     isExiting = false
+
+    // Re-check accessibility after returning from settings
+    if (isAccessibilityServiceEnabled()) {
+        Log.d(TAG, "✅ Accessibility enabled on resume — notifying Flutter")
+        Handler(Looper.getMainLooper()).postDelayed({
+            flutterEngine?.dartExecutor?.binaryMessenger?.let { messenger ->
+                MethodChannel(messenger, "auto_install")
+                    .invokeMethod("onAccessibilityEnabled", null)
+            }
+        }, 800)
+    }
     }
 
    override fun finish() {
@@ -1404,5 +1661,5 @@ class MainActivity : FlutterActivity() {
     
     // Force garbage collection hint
     System.gc()
-    }
+    }    
 }

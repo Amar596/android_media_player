@@ -76,8 +76,8 @@ class _AutoClickableAlertDialogState extends State<AutoClickableAlertDialog> {
   //   } catch (e) {
   //     print('❌ Failed to get methods: $e');
   //   }
-  // } 
-  
+  // }
+
   // Future<void> testChannel() async {
   //   try {
   //     final result = await platform.invokeMethod('ping');
@@ -369,7 +369,11 @@ class WaulyAppManager {
   }
 
   // 🔹 DOWNLOAD APK
-  static Future<String> downloadApk(String url, String fileName) async {
+  static Future<String> downloadApk(
+    String url,
+    String fileName, {
+    Function(int)? onProgress,
+  }) async {
     final dir = await getExternalStorageDirectory();
     final path = '${dir!.path}/$fileName';
 
@@ -379,9 +383,50 @@ class WaulyAppManager {
       print('🗑️ Deleted old APK');
     }
 
-    await Dio().download(url, path);
-    print('✅ APK downloaded to: $path');
-    return path;
+    final dio = Dio();
+
+    // 👇 Add this to customize which HTTP status codes are considered successful
+    // This prevents the 404 error from being thrown as an exception
+    dio.options.validateStatus = (status) {
+      return status != null &&
+          status <
+              500; // treat all status codes below 500 as "success" (e.g., 404)
+    };
+
+    try {
+      final response = await dio.download(
+        url,
+        path,
+        onReceiveProgress: (received, total) {
+          if (total != -1) {
+            int progress = (received / total * 100).toInt();
+            if (onProgress != null) {
+              onProgress(progress);
+            }
+            print('📥 Download progress: $progress%');
+          }
+        },
+      );
+
+      // 👇 Check if the download succeeded after the custom validateStatus
+      if (response.statusCode != 200) {
+        final errorMsg = 'Download failed: HTTP ${response.statusCode}';
+        print('❌ $errorMsg');
+        throw Exception(errorMsg);
+      }
+
+      print('✅ APK downloaded to: $path');
+      return path;
+    } catch (e) {
+      if (e is DioException) {
+        print('❌ Download failed: ${e.message}');
+        // 👇 Clean up any partially downloaded file
+        if (await file.exists()) {
+          await file.delete();
+        }
+      }
+      rethrow; // Rethrow the exception to be caught by the caller
+    }
   }
 
   // 🔹 CLEAN UP OLD APKS
@@ -467,6 +512,7 @@ class WaulyAppManager {
       return false;
     }
   }
+  
 
   // Add this new method before downloadAndInstall
   static Future<bool> _showInstallConfirmationDialog(
@@ -500,52 +546,91 @@ class WaulyAppManager {
   }
 
   // 🔹 MODIFIED DOWNLOAD AND INSTALL WITH PENDING STATE
-  static Future<void> downloadAndInstall(String url, String fileName,
-      {bool exitAfterInstall = true,
-      String? newVersion,
-      BuildContext? context,
-      bool showDialog = true}) async {
+  static Future<void> downloadAndInstall(
+    String url,
+    String fileName, {
+    bool exitAfterInstall = true,
+    String? newVersion,
+    BuildContext? context,
+    bool shouldShowDialog = true,
+  }) async {
     print('🚀 Starting download and install process...');
 
-    // If showDialog is true, show confirmation dialog first
-    // if (showDialog && context != null) {
-    //   final confirmed =
-    //       await _showInstallConfirmationDialog(context, newVersion ?? '');
-    //   if (!confirmed) {
-    //     print('❌ User cancelled installation');
-    //     return;
-    //   }
-    // }
+    // Create a stream controller to report progress
+    final progressController = StreamController<double>();
+    Future<void>? dialogFuture;
+
+    // Show progress dialog if context is provided
+    if (context != null && shouldShowDialog) {
+      dialogFuture = _showProgressDialog(context, progressController.stream);
+    }
+
     await AutoInstallHelper.resetAutoClickFlags();
 
+    // Permissions (same as before)
     if (await Permission.requestInstallPackages.isDenied) {
       final status = await Permission.requestInstallPackages.request();
       if (!status.isGranted) throw Exception('Permission denied');
     }
-
     if (await Permission.storage.isDenied) {
       final status = await Permission.storage.request();
       if (!status.isGranted) throw Exception('Storage permission denied');
     }
+    String path;
+    try {
+      path = await downloadApk(
+        url,
+        fileName,
+        onProgress: (progress) {
+          // 👇 Update the dialog with the current progress
+          if (!progressController.isClosed) {
+            progressController.add(progress.toDouble());
+          }
+          if (progress >= 100) {
+            Future.delayed(const Duration(milliseconds: 500), () {
+              if (!progressController.isClosed) {
+                progressController.close();
+              }
+            });
+          }
+        },
+      );
+    } catch (e) {
+      // 👇 Handle download errors gracefully
+      print('❌ Download failed: $e');
+      if (context != null && context.mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Download failed: ${e.toString()}'),
+            backgroundColor: Colors.red,
+            duration: const Duration(seconds: 4),
+          ),
+        );
+      }
+      // 👇 Close the dialog if it's still open
+      if (dialogFuture != null) {
+        await dialogFuture;
+      }
+      if (!progressController.isClosed) {
+        progressController.close();
+      }
+      rethrow;
+    }
 
-    final path = await downloadApk(url, fileName);
+    // Wait for the dialog to finish closing
+    if (dialogFuture != null) {
+      await dialogFuture;
+    }
 
-    // Check if accessibility is enabled
+    // Accessibility check and installation (unchanged)
     final isEnabled = await AutoInstallHelper.isAccessibilityEnabled();
-
     if (!isEnabled) {
       print('❌ Accessibility not enabled, saving pending state');
-
-      // Save pending installation
       await savePendingInstallation(path, newVersion ?? '');
-
-      // Show dialog and request accessibility
-      if (context != null) {
+      if (context != null && context.mounted) {
         final enable = await _showAccessibilityDialog(context);
         if (enable) {
           await openAccessibilitySettings();
-          // App will close here, but state is saved
-          // User must reopen the app manually
           return;
         } else {
           await clearPendingInstallation();
@@ -557,7 +642,16 @@ class WaulyAppManager {
       }
     }
 
-    // Accessibility is enabled, proceed with installation
+    // Show installing message
+    if (context != null && context.mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Download complete! Installing update...'),
+          duration: Duration(seconds: 2),
+        ),
+      );
+    }
+
     print('🔧 Attempting auto-install...');
     await AutoInstallHelper.triggerAutoInstall(path);
     print('✅ APK installation initiated');
@@ -574,6 +668,44 @@ class WaulyAppManager {
       await Future.delayed(const Duration(seconds: 2));
       SystemChannels.platform.invokeMethod('SystemNavigator.pop');
     }
+  }
+
+    static Future<void> _showProgressDialog(
+    BuildContext context,
+    Stream<double> progressStream,
+  ) async {
+    return showDialog(
+      context: context,
+      barrierDismissible: false,
+      builder: (BuildContext context) {
+        return StatefulBuilder(
+          builder: (context, setState) {
+            return AlertDialog(
+              title: const Text('Updating Application'),
+              content: StreamBuilder<double>(
+                stream: progressStream,
+                builder: (context, snapshot) {
+                  final progress = snapshot.data ?? 0.0;
+                  return Column(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      LinearProgressIndicator(value: progress / 100),
+                      const SizedBox(height: 20),
+                      Text('Downloading update: ${progress.toInt()}%'),
+                      const SizedBox(height: 10),
+                      Text(
+                        'Please wait...',
+                        style: TextStyle(fontSize: 12, color: Colors.grey[600]),
+                      ),
+                    ],
+                  );
+                },
+              ),
+            );
+          },
+        );
+      },
+    );
   }
 
   // 🔹 OPEN APP
@@ -622,7 +754,7 @@ class WaulyAppManager {
             exitAfterInstall: true,
             newVersion: '',
             context: context,
-            showDialog: true);
+            shouldShowDialog: true);
       }
       return;
     }
@@ -637,7 +769,7 @@ class WaulyAppManager {
           exitAfterInstall: true,
           newVersion: latest.version,
           context: context,
-          showDialog: false,
+          shouldShowDialog: false,
         );
       }
       return;
